@@ -73,6 +73,7 @@ module_param_named(timestamp_monotonic, drm_timestamp_monotonic, int, 0600);
 struct idr drm_minors_idr;
 
 struct class *drm_class;
+struct proc_dir_entry *drm_proc_root;
 struct dentry *drm_debugfs_root;
 
 int drm_err(const char *func, const char *format, ...)
@@ -325,8 +326,9 @@ EXPORT_SYMBOL(drm_fill_in_dev);
  * \param sec-minor structure to hold the assigned minor
  * \return negative number on failure.
  *
- * Search an empty entry and initialize it to the given parameters. This
- * routines assigns minor numbers to secondary heads of multi-headed cards
+ * Search an empty entry and initialize it to the given parameters, and
+ * create the proc init entry via proc_init(). This routines assigns
+ * minor numbers to secondary heads of multi-headed cards
  */
 int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type)
 {
@@ -354,11 +356,20 @@ int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type)
 
 	idr_replace(&drm_minors_idr, new_minor, minor_id);
 
+	if (type == DRM_MINOR_LEGACY) {
+		ret = drm_proc_init(new_minor, drm_proc_root);
+		if (ret) {
+			DRM_ERROR("DRM: Failed to initialize /proc/dri.\n");
+			goto err_mem;
+		}
+	} else
+		new_minor->proc_root = NULL;
+
 #if defined(CONFIG_DEBUG_FS)
 	ret = drm_debugfs_init(new_minor, minor_id, drm_debugfs_root);
 	if (ret) {
 		DRM_ERROR("DRM: Failed to initialize /sys/kernel/debug/dri.\n");
-		goto err_mem;
+		goto err_g2;
 	}
 #endif
 
@@ -366,7 +377,7 @@ int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type)
 	if (ret) {
 		printk(KERN_ERR
 		       "DRM: Error sysfs_device_add.\n");
-		goto err_debugfs;
+		goto err_g2;
 	}
 	*minor = new_minor;
 
@@ -374,11 +385,10 @@ int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type)
 	return 0;
 
 
-err_debugfs:
-#if defined(CONFIG_DEBUG_FS)
-	drm_debugfs_cleanup(new_minor);
+err_g2:
+	if (new_minor->type == DRM_MINOR_LEGACY)
+		drm_proc_cleanup(new_minor, drm_proc_root);
 err_mem:
-#endif
 	kfree(new_minor);
 err_idr:
 	idr_remove(&drm_minors_idr, minor_id);
@@ -392,6 +402,10 @@ EXPORT_SYMBOL(drm_get_minor);
  *
  * \param sec_minor - structure to be released
  * \return always zero
+ *
+ * Cleans up the proc resources. Not legal for this to be the
+ * last minor released.
+ *
  */
 int drm_put_minor(struct drm_minor **minor_p)
 {
@@ -399,6 +413,8 @@ int drm_put_minor(struct drm_minor **minor_p)
 
 	DRM_DEBUG("release secondary minor %d\n", minor->index);
 
+	if (minor->type == DRM_MINOR_LEGACY)
+		drm_proc_cleanup(minor, drm_proc_root);
 #if defined(CONFIG_DEBUG_FS)
 	drm_debugfs_cleanup(minor);
 #endif
