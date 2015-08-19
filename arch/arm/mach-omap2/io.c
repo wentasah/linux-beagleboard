@@ -45,6 +45,7 @@
 #include "sram.h"
 #include "cm2xxx.h"
 #include "cm3xxx.h"
+#include "pm.h"
 #include "prm.h"
 #include "cm.h"
 #include "prcm_mpu44xx.h"
@@ -587,6 +588,7 @@ void __init am33xx_init_early(void)
 void __init am33xx_init_late(void)
 {
 	omap_common_late_init();
+	am33xx_idle_init();
 }
 #endif
 
